@@ -12,11 +12,11 @@ from keras.models import load_model
 from keras.applications.resnet50 import preprocess_input
 
 # =====================================================================
-# 🛠️ PARCHES DE COMPATIBILIDAD (Colab <-> Local <-> Render)
+# 🛠️ PARCHES DE COMPATIBILIDAD AVANZADOS (Colab <-> Local <-> Render)
 # =====================================================================
 
 # 1️⃣ Parche para ignorar argumentos antiguos de BatchNormalization
-@keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable(package="Custom")
 class CustomBatchNormalization(keras.layers.BatchNormalization):
     def __init__(self, **kwargs):
         kwargs.pop('renorm', None)
@@ -24,20 +24,17 @@ class CustomBatchNormalization(keras.layers.BatchNormalization):
         kwargs.pop('renorm_momentum', None)
         super().__init__(**kwargs)
 
-# 2️⃣ NUEVO PARCHE: Eliminar quantization_config de las capas Dense
-@keras.saving.register_keras_serializable()
+# 2️⃣ Parche definitivo para las capas Dense (elimina quantization_config)
+@keras.saving.register_keras_serializable(package="Custom")
 class CustomDense(keras.layers.Dense):
     def __init__(self, **kwargs):
-        # Removemos el argumento conflictivo que genera el error en Keras moderno
         kwargs.pop('quantization_config', None)
         super().__init__(**kwargs)
-
-# 3️⃣ Registrar todos los parches en el entorno global de Keras antes de cargar el modelo
-keras.utils.get_custom_objects().update({
-    'BatchNormalization': CustomBatchNormalization,
-    'Dense': CustomDense,                     # <-- Agregamos el parche de Dense aquí
-    'preprocess_input': preprocess_input
-})
+    
+    @classmethod
+    def from_config(cls, config):
+        config.pop('quantization_config', None)
+        return super().from_config(config)
 
 # =====================================================================
 # 🚀 INICIALIZACIÓN DE LA API Y CARGA DEL MODELO
@@ -49,7 +46,18 @@ CORS(app)
 MODEL_PATH = "sunlit_model_fixed.keras" 
 
 print(f"Cargando modelo desde {MODEL_PATH}...")
-model = load_model(MODEL_PATH)
+
+# Inyectamos los objetos personalizados directamente en el entorno de carga
+custom_objects = {
+    'BatchNormalization': CustomBatchNormalization,
+    'Dense': CustomDense,
+    'preprocess_input': preprocess_input
+}
+
+# Forzamos a Keras a usar nuestro entorno modificado durante la lectura del archivo
+with keras.utils.custom_object_scope(custom_objects):
+    model = load_model(MODEL_PATH)
+
 print("¡Modelo cargado exitosamente!")
 
 # =====================================================================
