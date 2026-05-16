@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app)
 
 # 🔹 Cargar modelo
-model = load_model("sunlit_model.h5")
+model = load_model("sunlit_model_fixed.keras")
 
 # 🔹 Clases con info en español
 class_info = {
