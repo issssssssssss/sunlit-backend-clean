@@ -1,19 +1,54 @@
-from flask import Flask, request, jsonify
-from tensorflow.keras.models import load_model
-import numpy as np
-from PIL import Image
 import os
+import numpy as np
 import requests
+from flask import Flask, request, jsonify
 from flask_cors import CORS
+from PIL import Image
 from collections import Counter
+
+# 🔹 Importaciones esenciales de Keras
+import keras
+from keras.models import load_model
+from keras.applications.resnet50 import preprocess_input
+
+# =====================================================================
+# 🛠️ PARCHES DE COMPATIBILIDAD (Colab <-> Local <-> Render)
+# =====================================================================
+
+# 1️⃣ Parche para ignorar argumentos antiguos de BatchNormalization
+@keras.saving.register_keras_serializable()
+class CustomBatchNormalization(keras.layers.BatchNormalization):
+    def __init__(self, **kwargs):
+        kwargs.pop('renorm', None)
+        kwargs.pop('renorm_clipping', None)
+        kwargs.pop('renorm_momentum', None)
+        super().__init__(**kwargs)
+
+# 2️⃣ Registrar parches en el entorno global de Keras antes de cargar el modelo
+keras.utils.get_custom_objects().update({
+    'BatchNormalization': CustomBatchNormalization,
+    'preprocess_input': preprocess_input
+})
+
+# =====================================================================
+# 🚀 INICIALIZACIÓN DE LA API Y CARGA DEL MODELO
+# =====================================================================
 
 app = Flask(__name__)
 CORS(app)
 
-# 🔹 Cargar modelo
-model = load_model("sunlit_model_fixed.keras")
+# Nombre de tu archivo de modelo. 
+# NOTA: Si el archivo .keras te sigue dando problemas, puedes renombrar 
+# tu archivo .h5 anterior, ponerlo aquí y funcionará igual con los parches.
+MODEL_PATH = "sunlit_model_fixed.keras" 
 
-# 🔹 Clases con info en español
+print(f"Cargando modelo desde {MODEL_PATH}...")
+model = load_model(MODEL_PATH)
+print("¡Modelo cargado exitosamente!")
+
+# =====================================================================
+# 📋 DICCIONARIO DE ENFERMEDADES Y CLASES
+# =====================================================================
 class_info = {
     'Pepper__bell___Bacterial_spot': {
         "name": "Mancha bacteriana en pimiento",
@@ -166,15 +201,20 @@ class_info = {
     }
 }
 
-# 🔹 Preprocesamiento
+# =====================================================================
+# ⚙️ FUNCIONES AUXILIARES (Preprocesamiento, Clima y Análisis)
+# =====================================================================
+
 def preprocess_image(image):
+    """Ajusta el tamaño y aplica el preprocesamiento matemático de ResNet50"""
     image = image.resize((224, 224))
-    image = np.array(image) / 255.0
+    image = np.array(image, dtype=np.float32) # No dividimos por 255 aquí
     image = np.expand_dims(image, axis=0)
+    image = preprocess_input(image) # ResNet50 se encarga de centrar los datos
     return image
 
-# 🔹 Clima
 def get_climate(lat, lon):
+    """Consulta la API de la NASA para obtener datos climáticos en tiempo real"""
     try:
         url = f"https://power.larc.nasa.gov/api/temporal/daily/point?parameters=T2M,RH2M,PRECTOT&community=AG&longitude={lon}&latitude={lat}&format=JSON"
         data = requests.get(url, timeout=10).json()
@@ -188,9 +228,8 @@ def get_climate(lat, lon):
     except:
         return {"temperature": None, "humidity": None, "rain": None}
 
-# 🔹 Análisis
 def generate_analysis(pred_class, confidence, climate):
-
+    """Estructura la respuesta final cruzando la predicción con el clima"""
     if pred_class == "unknown":
         return {
             "estado": "No identificable",
@@ -205,15 +244,14 @@ def generate_analysis(pred_class, confidence, climate):
         }
 
     info = class_info[pred_class]
-
     recomendaciones = info["treatment"].copy()
 
-    # 🔥 Inteligencia con clima
+    # Lógica inteligente basada en el clima
     if climate["humidity"] and climate["humidity"] > 80:
-        recomendaciones.append("Alta humedad: riesgo elevado de hongos.")
+        recomendaciones.append("Alta humedad ambiental detectada: riesgo elevado de proliferación de hongos.")
 
     if climate["temperature"] and climate["temperature"] > 30:
-        recomendaciones.append("Temperatura alta: aumentar frecuencia de riego.")
+        recomendaciones.append("Temperatura alta detectada: aumente la frecuencia de riego para evitar estrés hídrico.")
 
     return {
         "estado": info["name"],
@@ -224,7 +262,10 @@ def generate_analysis(pred_class, confidence, climate):
         "clima": climate
     }
 
-# 🔥 ENDPOINT
+# =====================================================================
+# 🛣️ ENDPOINTS DE LA API FLASK
+# =====================================================================
+
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
@@ -252,17 +293,17 @@ def predict():
 
                 pred_class = class_keys[class_index]
 
+                # Filtro de seguridad por umbral de confianza inferior al 60%
                 if confidence < 0.6:
                     pred_class = "unknown"
 
                 predictions_list.append(pred_class)
-
                 results.append(generate_analysis(pred_class, confidence, climate))
 
-            except:
-                results.append({"error": "No se pudo procesar la imagen"})
+            except Exception as img_err:
+                results.append({"error": f"No se pudo procesar esta imagen: {str(img_err)}"})
 
-        # 🔥 SUMMARY EN ESPAÑOL
+        # Construcción del resumen en español
         summary_raw = Counter(predictions_list)
         summary = {}
 
@@ -284,7 +325,9 @@ def predict():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "API funcionando correctamente"
+    return "API de análisis de cultivos funcionando correctamente"
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # Render asignará automáticamente el puerto mediante la variable de entorno PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
