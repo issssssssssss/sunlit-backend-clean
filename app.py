@@ -24,9 +24,18 @@ class CustomBatchNormalization(keras.layers.BatchNormalization):
         kwargs.pop('renorm_momentum', None)
         super().__init__(**kwargs)
 
-# 2️⃣ Registrar parches en el entorno global de Keras antes de cargar el modelo
+# 2️⃣ NUEVO PARCHE: Eliminar quantization_config de las capas Dense
+@keras.saving.register_keras_serializable()
+class CustomDense(keras.layers.Dense):
+    def __init__(self, **kwargs):
+        # Removemos el argumento conflictivo que genera el error en Keras moderno
+        kwargs.pop('quantization_config', None)
+        super().__init__(**kwargs)
+
+# 3️⃣ Registrar todos los parches en el entorno global de Keras antes de cargar el modelo
 keras.utils.get_custom_objects().update({
     'BatchNormalization': CustomBatchNormalization,
+    'Dense': CustomDense,                     # <-- Agregamos el parche de Dense aquí
     'preprocess_input': preprocess_input
 })
 
@@ -37,9 +46,6 @@ keras.utils.get_custom_objects().update({
 app = Flask(__name__)
 CORS(app)
 
-# Nombre de tu archivo de modelo. 
-# NOTA: Si el archivo .keras te sigue dando problemas, puedes renombrar 
-# tu archivo .h5 anterior, ponerlo aquí y funcionará igual con los parches.
 MODEL_PATH = "sunlit_model_fixed.keras" 
 
 print(f"Cargando modelo desde {MODEL_PATH}...")
@@ -208,9 +214,9 @@ class_info = {
 def preprocess_image(image):
     """Ajusta el tamaño y aplica el preprocesamiento matemático de ResNet50"""
     image = image.resize((224, 224))
-    image = np.array(image, dtype=np.float32) # No dividimos por 255 aquí
+    image = np.array(image, dtype=np.float32)
     image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image) # ResNet50 se encarga de centrar los datos
+    image = preprocess_input(image)
     return image
 
 def get_climate(lat, lon):
@@ -246,7 +252,6 @@ def generate_analysis(pred_class, confidence, climate):
     info = class_info[pred_class]
     recomendaciones = info["treatment"].copy()
 
-    # Lógica inteligente basada en el clima
     if climate["humidity"] and climate["humidity"] > 80:
         recomendaciones.append("Alta humedad ambiental detectada: riesgo elevado de proliferación de hongos.")
 
@@ -293,7 +298,6 @@ def predict():
 
                 pred_class = class_keys[class_index]
 
-                # Filtro de seguridad por umbral de confianza inferior al 60%
                 if confidence < 0.6:
                     pred_class = "unknown"
 
@@ -303,7 +307,6 @@ def predict():
             except Exception as img_err:
                 results.append({"error": f"No se pudo procesar esta imagen: {str(img_err)}"})
 
-        # Construcción del resumen en español
         summary_raw = Counter(predictions_list)
         summary = {}
 
@@ -328,6 +331,5 @@ def home():
     return "API de análisis de cultivos funcionando correctamente"
 
 if __name__ == "__main__":
-    # Render asignará automáticamente el puerto mediante la variable de entorno PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
