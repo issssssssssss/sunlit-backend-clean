@@ -1,4 +1,20 @@
 import os
+
+# =====================================================================
+# 📉 CONFIGURACIÓN DE APAGADO Y AHORRO DE MEMORIA (¡DEBE IR PRIMERO!)
+# =====================================================================
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'             # Bloquea alertas y logs pesados de TensorFlow
+os.environ['TACO_TENSOR_ALLOCATOR'] = 'false'         # Desactiva la pre-asignación masiva de memoria
+os.environ['KERAS_BACKEND'] = 'tensorflow'           # Asegura que Keras sepa qué motor usar
+
+import tensorflow as tf
+# Desactivamos por completo la búsqueda de controladores CUDA/GPU para ahorrar RAM
+tf.config.set_visible_devices([], 'GPU')
+tf.config.experimental.do_not_minify = True           # Evita optimizaciones de grafos que saturan la memoria
+
+# =====================================================================
+# 📦 RESTO DE IMPORTS DE LA APLICACIÓN
+# =====================================================================
 import numpy as np
 import requests
 from flask import Flask, request, jsonify
@@ -6,10 +22,22 @@ from flask_cors import CORS
 from PIL import Image
 from collections import Counter
 
-# 🔹 Importaciones esenciales de Keras
+# 🔹 Importaciones de Keras
 import keras
 from keras.models import load_model
 from keras.applications.resnet50 import preprocess_input
+
+# =====================================================================
+# 🛠️ PARCHE AGRESIVO DE COMPATIBILIDAD (Interceptando Keras Nativo)
+# =====================================================================
+original_dense_from_config = keras.layers.Dense.from_config
+
+@classmethod
+def robust_dense_from_config(cls, config):
+    config.pop('quantization_config', None)  # Borra el causante del error en Render
+    config.pop('dtype', None)                # Previene errores de políticas de tipos
+    return original_dense_from_config(config)
+
 
 # =====================================================================
 # 🛠️ PARCHES DE COMPATIBILIDAD AVANZADOS (Colab <-> Local <-> Render)
